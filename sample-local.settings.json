@@ -1,0 +1,10 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "node",
+    "MarkRadTestEHNS_RootManageSharedAccessKey_EVENTHUB": "<Copy from hub built-in endpoints - Endpoint=sb//iothub... etc.>",
+    "TargetEventHubSpace": "<Copy from Event Hub namespace shared access policies>",
+    "TargetEventHubName": "<Event Hub name>"
+  }
+}
