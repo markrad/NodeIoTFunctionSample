@@ -9,13 +9,8 @@
 // -s will update package.json with the dependency which is required for deployment to Azure
 const { EventHubClient } = require("@azure/event-hubs");
 
-// These two variables are specified in local.settings.json but imported into 
-// the environment by the Azure function system code
-var ehOutSpace = process.env.TargetEventHubSpace;
-var ehOutName = process.env.TargetEventHubName;
-
-// Create the Event Hub client
-var client = EventHubClient.createFromConnectionString(ehOutSpace, ehOutName);
+// The target Event Hub client
+var client = null;
 
 // Split the incoming data into seperate elements and send to Event Hub
 var sendToEventHub = (context, data) =>
@@ -23,43 +18,90 @@ var sendToEventHub = (context, data) =>
     // Interate through array of telemetry readings
     data.forEach((element) => 
     {
-        context.log(JSON.stringify(element));       // Optional
-        client.send(element);                       // Send data to Event Hub
-    });
-}
+        context.log.verbose(JSON.stringify(element));       // Optional
+		client.send(element)
+			.catch((e) => 
+			{
+				context.log.warning("Failed to send data: " + e.message);
+			});                       		// Send data to Event Hub
+	});
+	
+	console.log('Sent ' + data.length + ' messages');
+};
+
+// This function is set up to be called for the first message received
+var firstMessage = async function(context, eventHubMessages)
+{
+	// It is possible that this function can get called more than once
+	// This will prevent the client being initialized after has already been so
+	if (client != null)
+	{
+		processor(context, eventHubMessages);
+		return;
+	}
+
+	// These two variables are specified in local.settings.json but imported into 
+	// the environment by the Azure function system code
+	var ehOutSpace = process.env.TargetEventHubSpace;
+	var ehOutName = process.env.TargetEventHubName;
+
+	try
+	{
+		context.log('Event Hub connection string: ' + ehOutSpace);
+		context.log('Event Hub name: ' + ehOutName);
+		client = EventHubClient.createFromConnectionString(ehOutSpace, ehOutName);
+	}
+	catch (e)
+	{
+		context.log.error('Event Hub connection failed: ' + e.message);
+		context.log.error('\n' + e.stack)
+	}
+
+	processor = nextMessage;
+	processor(context, eventHubMessages);
+};
+
+// This function will be called for every message after the first
+var nextMessage = async function(context, eventHubMessages)
+{
+	try
+	{
+		context.log.verbose('Received ' + eventHubMessages.length + ' messages');
+
+		// Iterate through the array of messages sent 
+		eventHubMessages.forEach((message, index) => 
+		{
+			// Check that the message matches the expected format. This will prevent exceptions being thrown later
+			if (message.length != undefined && typeof message[0].timestamp != 'undefined' && typeof message[0].Epoch != 'undefined')
+			{
+				// Send the batch for splitting and sending to the Event Hub
+				try
+				{
+					sendToEventHub(context, message);
+				}
+				catch (exp)
+				{
+					context.log.warn('Exception: ' + exp.message);
+					context.log.warn('\n' + exp.stack);
+				}
+			}
+			else
+			{
+				// If the script is expected to recognize all data then this might be useful
+				context.log.verbose('Message ignored');
+			}
+		});
+	}
+	catch (e)
+	{
+		context.log.error('Failed to parse messages: ' + e.message + '\n' + e.stack);
+	}
+};
+
+var processor = firstMessage;
 
 // This function is called by the Azure Function system code
-module.exports = async function (context, eventHubMessages) 
-{
-    if (!client)
-    {
-        // Event Hub client creation failed
-        context.log.error('Failed to create outgoing Event Hub connection');
-    }
-    
-    // Iterate through the array of messages sent 
-    eventHubMessages.forEach((message, index) => 
-    {
-        // Check that the message matches the expected format. This will prevent exceptions being thrown later
-        if (message.length != undefined && typeof message[0].timestamp != 'undefined' && typeof message[0].Epoch != 'undefined')
-        {
-            // Send the batch for splitting and sending to the Event Hub
-            try
-            {
-                sendToEventHub(context, message);
-            }
-            catch (exp)
-            {
-                context.log.warn(`Exception: ${exp.message}`);
-            }
-        }
-        else
-        {
-            // If the script is expected to recognize all data then this might be useful
-            //context.log.warn('Unrecognized data format');
-        }
-    });
-};
+module.exports = processor; 
 
 /* ------------------------------------------------------------------------------------------------ *\
 
